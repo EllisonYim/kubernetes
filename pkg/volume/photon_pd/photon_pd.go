@@ -114,7 +114,9 @@ func (plugin *photonPersistentDiskPlugin) newMounterInternal(spec *volume.Spec, 
 			plugin:  plugin,
 		},
 		fsType:      fsType,
-		diskMounter: util.NewSafeFormatAndMountFromHost(plugin.GetPluginName(), plugin.host)}, nil
+		diskMounter: util.NewSafeFormatAndMountFromHost(plugin.GetPluginName(), plugin.host),
+		mountOption: util.MountOptionFromSpec(spec),
+	}, nil
 }
 
 func (plugin *photonPersistentDiskPlugin) newUnmounterInternal(volName string, podUID types.UID, manager pdManager, mounter mount.Interface) (volume.Unmounter, error) {
@@ -177,6 +179,7 @@ type photonPersistentDiskMounter struct {
 	*photonPersistentDisk
 	fsType      string
 	diskMounter *mount.SafeFormatAndMount
+	mountOption []string
 }
 
 func (b *photonPersistentDiskMounter) GetAttributes() volume.Attributes {
@@ -222,7 +225,8 @@ func (b *photonPersistentDiskMounter) SetUpAt(dir string, fsGroup *int64) error 
 	globalPDPath := makeGlobalPDPath(b.plugin.host, b.pdID)
 	glog.V(4).Infof("attempting to mount %s", dir)
 
-	err = b.mounter.Mount(globalPDPath, dir, "", options)
+	mountOptions := util.JoinMountOptions(options, b.mountOption)
+	err = b.mounter.Mount(globalPDPath, dir, "", mountOptions)
 	if err != nil {
 		notmnt, mntErr := b.mounter.IsLikelyNotMountPoint(dir)
 		if mntErr != nil {
@@ -340,9 +344,13 @@ func (plugin *photonPersistentDiskPlugin) newProvisionerInternal(options volume.
 	}, nil
 }
 
-func (p *photonPersistentDiskProvisioner) Provision() (*v1.PersistentVolume, error) {
+func (p *photonPersistentDiskProvisioner) Provision(selectedNode *v1.Node, allowedTopologies []v1.TopologySelectorTerm) (*v1.PersistentVolume, error) {
 	if !util.AccessModesContainedInAll(p.plugin.GetAccessModes(), p.options.PVC.Spec.AccessModes) {
 		return nil, fmt.Errorf("invalid AccessModes %v: only AccessModes %v are supported", p.options.PVC.Spec.AccessModes, p.plugin.GetAccessModes())
+	}
+
+	if util.CheckPersistentVolumeClaimModeBlock(p.options.PVC) {
+		return nil, fmt.Errorf("%s does not support block volume provisioning", p.plugin.GetPluginName())
 	}
 
 	pdID, sizeGB, fstype, err := p.manager.CreateVolume(p)

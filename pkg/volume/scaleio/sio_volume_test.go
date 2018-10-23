@@ -263,8 +263,8 @@ func TestVolumeProvisioner(t *testing.T) {
 	}
 
 	options := volume.VolumeOptions{
-		ClusterName: "testcluster",
-		PVC:         volumetest.CreateTestPVC("100Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
+		ClusterName:                   "testcluster",
+		PVC:                           volumetest.CreateTestPVC("100Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
 		PersistentVolumeReclaimPolicy: api.PersistentVolumeReclaimDelete,
 	}
 	options.PVC.Name = "testpvc"
@@ -296,7 +296,7 @@ func TestVolumeProvisioner(t *testing.T) {
 	}
 	sioVol.sioMgr.client = sio
 
-	spec, err := provisioner.Provision()
+	spec, err := provisioner.Provision(nil, nil)
 	if err != nil {
 		t.Fatalf("call to Provision() failed: %v", err)
 	}
@@ -408,9 +408,9 @@ func TestVolumeProvisionerWithIncompleteConfig(t *testing.T) {
 	}
 
 	options := volume.VolumeOptions{
-		ClusterName: "testcluster",
-		PVName:      "pvc-sio-dynamic-vol",
-		PVC:         volumetest.CreateTestPVC("100Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
+		ClusterName:                   "testcluster",
+		PVName:                        "pvc-sio-dynamic-vol",
+		PVC:                           volumetest.CreateTestPVC("100Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
 		PersistentVolumeReclaimPolicy: api.PersistentVolumeReclaimDelete,
 	}
 	options.PVC.Namespace = testns
@@ -440,9 +440,9 @@ func TestVolumeProvisionerWithZeroCapacity(t *testing.T) {
 	}
 
 	options := volume.VolumeOptions{
-		ClusterName: "testcluster",
-		PVName:      "pvc-sio-dynamic-vol",
-		PVC:         volumetest.CreateTestPVC("0Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
+		ClusterName:                   "testcluster",
+		PVName:                        "pvc-sio-dynamic-vol",
+		PVC:                           volumetest.CreateTestPVC("0Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
 		PersistentVolumeReclaimPolicy: api.PersistentVolumeReclaimDelete,
 	}
 	options.PVC.Namespace = testns
@@ -467,7 +467,7 @@ func TestVolumeProvisionerWithZeroCapacity(t *testing.T) {
 	}
 	sioVol.sioMgr.client = sio
 
-	_, err = provisioner.Provision()
+	_, err = provisioner.Provision(nil, nil)
 	if err == nil {
 		t.Fatalf("call to Provision() should fail with invalid capacity")
 	}
@@ -488,9 +488,9 @@ func TestVolumeProvisionerWithSecretNamespace(t *testing.T) {
 	}
 
 	options := volume.VolumeOptions{
-		ClusterName: "testcluster",
-		PVName:      "pvc-sio-dynamic-vol",
-		PVC:         volumetest.CreateTestPVC("100Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
+		ClusterName:                   "testcluster",
+		PVName:                        "pvc-sio-dynamic-vol",
+		PVC:                           volumetest.CreateTestPVC("100Mi", []api.PersistentVolumeAccessMode{api.ReadWriteOnce}),
 		PersistentVolumeReclaimPolicy: api.PersistentVolumeReclaimDelete,
 	}
 
@@ -516,7 +516,7 @@ func TestVolumeProvisionerWithSecretNamespace(t *testing.T) {
 	}
 	sioVol.sioMgr.client = sio
 
-	spec, err := sioVol.Provision()
+	spec, err := sioVol.Provision(nil, nil)
 	if err != nil {
 		t.Fatalf("call to Provision() failed: %v", err)
 	}

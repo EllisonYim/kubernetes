@@ -71,6 +71,7 @@ func PrivilegedPSP(name string) *extensionsv1beta1.PodSecurityPolicy {
 				Rule: extensionsv1beta1.FSGroupStrategyRunAsAny,
 			},
 			ReadOnlyRootFilesystem: false,
+			AllowedUnsafeSysctls:   []string{"*"},
 		},
 	}
 }
@@ -112,7 +113,9 @@ func CreatePrivilegedPSPBinding(f *Framework, namespace string) {
 
 		psp := PrivilegedPSP(podSecurityPolicyPrivileged)
 		psp, err = f.ClientSet.ExtensionsV1beta1().PodSecurityPolicies().Create(psp)
-		ExpectNoError(err, "Failed to create PSP %s", podSecurityPolicyPrivileged)
+		if !apierrs.IsAlreadyExists(err) {
+			ExpectNoError(err, "Failed to create PSP %s", podSecurityPolicyPrivileged)
+		}
 
 		if IsRBACEnabled(f) {
 			// Create the Role to bind it to the namespace.
@@ -125,7 +128,9 @@ func CreatePrivilegedPSPBinding(f *Framework, namespace string) {
 					Verbs:         []string{"use"},
 				}},
 			})
-			ExpectNoError(err, "Failed to create PSP role")
+			if !apierrs.IsAlreadyExists(err) {
+				ExpectNoError(err, "Failed to create PSP role")
+			}
 		}
 	})
 

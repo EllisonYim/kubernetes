@@ -23,18 +23,20 @@ import (
 
 	"github.com/golang/glog"
 
+	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/kubernetes/pkg/cloudprovider"
+	cloudprovider "k8s.io/cloud-provider"
+	csiclientset "k8s.io/csi-api/pkg/client/clientset/versioned"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/kubelet/configmap"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/mountpod"
 	"k8s.io/kubernetes/pkg/kubelet/secret"
-	"k8s.io/kubernetes/pkg/util/io"
+	"k8s.io/kubernetes/pkg/kubelet/token"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
@@ -50,6 +52,7 @@ func NewInitializedVolumePluginMgr(
 	kubelet *Kubelet,
 	secretManager secret.Manager,
 	configMapManager configmap.Manager,
+	tokenManager *token.Manager,
 	plugins []volume.VolumePlugin,
 	prober volume.DynamicPluginProber) (*volume.VolumePluginMgr, error) {
 
@@ -62,6 +65,7 @@ func NewInitializedVolumePluginMgr(
 		volumePluginMgr:  volume.VolumePluginMgr{},
 		secretManager:    secretManager,
 		configMapManager: configMapManager,
+		tokenManager:     tokenManager,
 		mountPodManager:  mountPodManager,
 	}
 
@@ -85,6 +89,7 @@ type kubeletVolumeHost struct {
 	kubelet          *Kubelet
 	volumePluginMgr  volume.VolumePluginMgr
 	secretManager    secret.Manager
+	tokenManager     *token.Manager
 	configMapManager configmap.Manager
 	mountPodManager  mountpod.Manager
 }
@@ -115,6 +120,10 @@ func (kvh *kubeletVolumeHost) GetPodPluginDir(podUID types.UID, pluginName strin
 
 func (kvh *kubeletVolumeHost) GetKubeClient() clientset.Interface {
 	return kvh.kubelet.kubeClient
+}
+
+func (kvh *kubeletVolumeHost) GetCSIClient() csiclientset.Interface {
+	return kvh.kubelet.csiClient
 }
 
 func (kvh *kubeletVolumeHost) NewWrapperMounter(
@@ -163,10 +172,6 @@ func (kvh *kubeletVolumeHost) GetMounter(pluginName string) mount.Interface {
 	return mount.NewExecMounter(exec, kvh.kubelet.mounter)
 }
 
-func (kvh *kubeletVolumeHost) GetWriter() io.Writer {
-	return kvh.kubelet.writer
-}
-
 func (kvh *kubeletVolumeHost) GetHostName() string {
 	return kvh.kubelet.hostname
 }
@@ -189,6 +194,10 @@ func (kvh *kubeletVolumeHost) GetSecretFunc() func(namespace, name string) (*v1.
 
 func (kvh *kubeletVolumeHost) GetConfigMapFunc() func(namespace, name string) (*v1.ConfigMap, error) {
 	return kvh.configMapManager.GetConfigMap
+}
+
+func (kvh *kubeletVolumeHost) GetServiceAccountTokenFunc() func(namespace, name string, tr *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
+	return kvh.tokenManager.GetServiceAccountToken
 }
 
 func (kvh *kubeletVolumeHost) GetNodeLabels() (map[string]string, error) {
@@ -238,7 +247,7 @@ func (kvh *kubeletVolumeHost) getMountExec(pluginName string) (mount.Exec, error
 		glog.V(5).Infof("using default mounter/exec for %s", pluginName)
 		return nil, nil
 	}
-	glog.V(5).Infof("using container %s/%s/%s to execute mount utilites for %s", pod.Namespace, pod.Name, container, pluginName)
+	glog.V(5).Infof("using container %s/%s/%s to execute mount utilities for %s", pod.Namespace, pod.Name, container, pluginName)
 	return &containerExec{
 		pod:           pod,
 		containerName: container,

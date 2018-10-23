@@ -25,9 +25,11 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 	admissionregistration "k8s.io/kubernetes/pkg/apis/admissionregistration"
 	apps "k8s.io/kubernetes/pkg/apis/apps"
+	auditregistration "k8s.io/kubernetes/pkg/apis/auditregistration"
 	autoscaling "k8s.io/kubernetes/pkg/apis/autoscaling"
 	batch "k8s.io/kubernetes/pkg/apis/batch"
 	certificates "k8s.io/kubernetes/pkg/apis/certificates"
+	coordination "k8s.io/kubernetes/pkg/apis/coordination"
 	core "k8s.io/kubernetes/pkg/apis/core"
 	extensions "k8s.io/kubernetes/pkg/apis/extensions"
 	networking "k8s.io/kubernetes/pkg/apis/networking"
@@ -78,6 +80,10 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	case apps.SchemeGroupVersion.WithResource("statefulsets"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Apps().InternalVersion().StatefulSets().Informer()}, nil
 
+		// Group=auditregistration.k8s.io, Version=internalVersion
+	case auditregistration.SchemeGroupVersion.WithResource("auditsinks"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Auditregistration().InternalVersion().AuditSinks().Informer()}, nil
+
 		// Group=autoscaling, Version=internalVersion
 	case autoscaling.SchemeGroupVersion.WithResource("horizontalpodautoscalers"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Autoscaling().InternalVersion().HorizontalPodAutoscalers().Informer()}, nil
@@ -91,6 +97,10 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		// Group=certificates.k8s.io, Version=internalVersion
 	case certificates.SchemeGroupVersion.WithResource("certificatesigningrequests"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Certificates().InternalVersion().CertificateSigningRequests().Informer()}, nil
+
+		// Group=coordination.k8s.io, Version=internalVersion
+	case coordination.SchemeGroupVersion.WithResource("leases"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Coordination().InternalVersion().Leases().Informer()}, nil
 
 		// Group=core, Version=internalVersion
 	case core.SchemeGroupVersion.WithResource("componentstatuses"):

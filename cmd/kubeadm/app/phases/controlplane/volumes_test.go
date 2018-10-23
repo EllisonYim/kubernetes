@@ -234,7 +234,7 @@ func TestGetEtcdCertVolumes(t *testing.T) {
 	}
 
 	for _, rt := range tests {
-		actualVol, actualVolMount := getEtcdCertVolumes(kubeadmapi.Etcd{
+		actualVol, actualVolMount := getEtcdCertVolumes(&kubeadmapi.ExternalEtcd{
 			CAFile:   rt.ca,
 			CertFile: rt.cert,
 			KeyFile:  rt.key,
@@ -502,13 +502,13 @@ func TestGetHostPathVolumesForTheControlPlane(t *testing.T) {
 		ReadOnly:  true,
 	}
 	var tests = []struct {
-		cfg      *kubeadmapi.MasterConfiguration
+		cfg      *kubeadmapi.ClusterConfiguration
 		vol      map[string]map[string]v1.Volume
 		volMount map[string]map[string]v1.VolumeMount
 	}{
 		{
 			// Should ignore files in /etc/ssl/certs
-			cfg: &kubeadmapi.MasterConfiguration{
+			cfg: &kubeadmapi.ClusterConfiguration{
 				CertificatesDir: testCertsDir,
 				Etcd:            kubeadmapi.Etcd{},
 				FeatureGates:    map[string]bool{features.Auditing: true},
@@ -522,13 +522,15 @@ func TestGetHostPathVolumesForTheControlPlane(t *testing.T) {
 		},
 		{
 			// Should ignore files in /etc/ssl/certs and in CertificatesDir
-			cfg: &kubeadmapi.MasterConfiguration{
+			cfg: &kubeadmapi.ClusterConfiguration{
 				CertificatesDir: testCertsDir,
 				Etcd: kubeadmapi.Etcd{
-					Endpoints: []string{"foo"},
-					CAFile:    "/etc/certs/etcd/my-etcd-ca.crt",
-					CertFile:  testCertsDir + "/etcd/my-etcd.crt",
-					KeyFile:   "/var/lib/etcd/certs/my-etcd.key",
+					External: &kubeadmapi.ExternalEtcd{
+						Endpoints: []string{"foo"},
+						CAFile:    "/etc/certs/etcd/my-etcd-ca.crt",
+						CertFile:  testCertsDir + "/etcd/my-etcd.crt",
+						KeyFile:   "/var/lib/etcd/certs/my-etcd.key",
+					},
 				},
 			},
 			vol:      volMap2,
@@ -547,7 +549,11 @@ func TestGetHostPathVolumesForTheControlPlane(t *testing.T) {
 	defer func() { caCertsExtraVolumePaths = []string{"/etc/pki", "/usr/share/ca-certificates"} }()
 
 	for _, rt := range tests {
-		mounts := getHostPathVolumesForTheControlPlane(rt.cfg)
+		// TODO: Make getHostPathVolumesForTheControlPlane accept a ClusterConfiguration object instead of InitConfiguration
+		initcfg := &kubeadmapi.InitConfiguration{
+			ClusterConfiguration: *rt.cfg,
+		}
+		mounts := getHostPathVolumesForTheControlPlane(initcfg)
 
 		// Avoid unit test errors when the flexvolume is mounted
 		if _, ok := mounts.volumes[kubeadmconstants.KubeControllerManager][flexvolumeDirVolumeName]; ok {

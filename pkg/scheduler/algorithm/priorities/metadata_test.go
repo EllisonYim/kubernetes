@@ -20,13 +20,12 @@ import (
 	"reflect"
 	"testing"
 
-	apps "k8s.io/api/apps/v1beta1"
+	apps "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
-	extensions "k8s.io/api/extensions/v1beta1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	priorityutil "k8s.io/kubernetes/pkg/scheduler/algorithm/priorities/util"
-	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
+	schedulercache "k8s.io/kubernetes/pkg/scheduler/cache"
 	schedulertesting "k8s.io/kubernetes/pkg/scheduler/testing"
 )
 
@@ -156,7 +155,7 @@ func TestPriorityMetadata(t *testing.T) {
 	mataDataProducer := NewPriorityMetadataFactory(
 		schedulertesting.FakeServiceLister([]*v1.Service{}),
 		schedulertesting.FakeControllerLister([]*v1.ReplicationController{}),
-		schedulertesting.FakeReplicaSetLister([]*extensions.ReplicaSet{}),
+		schedulertesting.FakeReplicaSetLister([]*apps.ReplicaSet{}),
 		schedulertesting.FakeStatefulSetLister([]*apps.StatefulSet{}))
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -96,7 +96,7 @@ type fakeDiskManager struct {
 	detachCalled bool
 }
 
-func NewFakeDiskManager() *fakeDiskManager {
+func newFakeDiskManager() *fakeDiskManager {
 	return &fakeDiskManager{
 		tmpDir: utiltesting.MkTmpdirOrDie("fc_test"),
 	}
@@ -161,7 +161,7 @@ func doTestPlugin(t *testing.T, spec *volume.Spec) {
 	if err != nil {
 		t.Errorf("Can't find the plugin by name")
 	}
-	fakeManager := NewFakeDiskManager()
+	fakeManager := newFakeDiskManager()
 	defer fakeManager.Cleanup()
 	fakeMounter := &mount.FakeMounter{}
 	fakeExec := mount.NewFakeExec(nil)
@@ -190,7 +190,7 @@ func doTestPlugin(t *testing.T, spec *volume.Spec) {
 		}
 	}
 
-	fakeManager2 := NewFakeDiskManager()
+	fakeManager2 := newFakeDiskManager()
 	defer fakeManager2.Cleanup()
 	unmounter, err := plug.(*fcPlugin).newUnmounterInternal("vol1", types.UID("poduid"), fakeManager2, fakeMounter)
 	if err != nil {
@@ -224,7 +224,7 @@ func doTestPluginNilMounter(t *testing.T, spec *volume.Spec) {
 	if err != nil {
 		t.Errorf("Can't find the plugin by name")
 	}
-	fakeManager := NewFakeDiskManager()
+	fakeManager := newFakeDiskManager()
 	defer fakeManager.Cleanup()
 	fakeMounter := &mount.FakeMounter{}
 	fakeExec := mount.NewFakeExec(nil)
@@ -441,7 +441,7 @@ func Test_ConstructVolumeSpec(t *testing.T) {
 		"/var/lib/kubelet/pods/some-pod/volumes/kubernetes.io~fc/fc-in-pod2",
 	}
 	for _, path := range mountPaths {
-		refs, err := mount.GetMountRefs(fm, path)
+		refs, err := fm.GetMountRefs(path)
 		if err != nil {
 			t.Errorf("couldn't get mountrefs. err: %v", err)
 		}
@@ -488,7 +488,7 @@ func Test_ConstructVolumeSpecNoRefs(t *testing.T) {
 		"/var/lib/kubelet/pods/some-pod/volumes/kubernetes.io~fc/fc-in-pod1",
 	}
 	for _, path := range mountPaths {
-		refs, _ := mount.GetMountRefs(fm, path)
+		refs, _ := fm.GetMountRefs(path)
 		var globalPDPath string
 		for _, ref := range refs {
 			if strings.Contains(ref, "kubernetes.io/fc") {

@@ -43,8 +43,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	cloudprovider "k8s.io/cloud-provider"
 	"k8s.io/kubernetes/pkg/api/v1/service"
-	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
 // Note: when creating a new Loadbalancer (VM), it can take some time before it is ready for use,
@@ -460,7 +460,7 @@ func (lbaas *LbaasV2) createLoadBalancer(service *v1.Service, name string, inter
 
 // GetLoadBalancer returns whether the specified load balancer exists and its status
 func (lbaas *LbaasV2) GetLoadBalancer(ctx context.Context, clusterName string, service *v1.Service) (*v1.LoadBalancerStatus, bool, error) {
-	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	loadBalancerName := lbaas.GetLoadBalancerName(ctx, clusterName, service)
 	loadbalancer, err := getLoadbalancerByName(lbaas.lb, loadBalancerName)
 	if err == ErrNotFound {
 		return nil, false, nil
@@ -474,10 +474,13 @@ func (lbaas *LbaasV2) GetLoadBalancer(ctx context.Context, clusterName string, s
 	portID := loadbalancer.VipPortID
 	if portID != "" {
 		floatIP, err := getFloatingIPByPortID(lbaas.network, portID)
-		if err != nil {
+		if err != nil && err != ErrNotFound {
 			return nil, false, fmt.Errorf("error getting floating ip for port %s: %v", portID, err)
 		}
-		status.Ingress = []v1.LoadBalancerIngress{{IP: floatIP.FloatingIP}}
+
+		if floatIP != nil {
+			status.Ingress = []v1.LoadBalancerIngress{{IP: floatIP.FloatingIP}}
+		}
 	} else {
 		status.Ingress = []v1.LoadBalancerIngress{{IP: loadbalancer.VipAddress}}
 	}
@@ -485,23 +488,35 @@ func (lbaas *LbaasV2) GetLoadBalancer(ctx context.Context, clusterName string, s
 	return status, true, err
 }
 
+// GetLoadBalancerName is an implementation of LoadBalancer.GetLoadBalancerName.
+func (lbaas *LbaasV2) GetLoadBalancerName(ctx context.Context, clusterName string, service *v1.Service) string {
+	// TODO: replace DefaultLoadBalancerName to generate more meaningful loadbalancer names.
+	return cloudprovider.DefaultLoadBalancerName(service)
+}
+
 // The LB needs to be configured with instance addresses on the same
 // subnet as the LB (aka opts.SubnetID).  Currently we're just
-// guessing that the node's InternalIP is the right address - and that
-// should be sufficient for all "normal" cases.
+// guessing that the node's InternalIP is the right address.
+// In case no InternalIP can be found, ExternalIP is tried.
+// If neither InternalIP nor ExternalIP can be found an error is
+// returned.
 func nodeAddressForLB(node *v1.Node) (string, error) {
 	addrs := node.Status.Addresses
 	if len(addrs) == 0 {
 		return "", ErrNoAddressFound
 	}
 
-	for _, addr := range addrs {
-		if addr.Type == v1.NodeInternalIP {
-			return addr.Address, nil
+	allowedAddrTypes := []v1.NodeAddressType{v1.NodeInternalIP, v1.NodeExternalIP}
+
+	for _, allowedAddrType := range allowedAddrTypes {
+		for _, addr := range addrs {
+			if addr.Type == allowedAddrType {
+				return addr.Address, nil
+			}
 		}
 	}
 
-	return addrs[0].Address, nil
+	return "", ErrNoAddressFound
 }
 
 //getStringFromServiceAnnotation searches a given v1.Service for a specific annotationKey and either returns the annotation's value or a specified defaultSetting
@@ -548,14 +563,14 @@ func getSubnetIDForLB(compute *gophercloud.ServiceClient, node v1.Node) (string,
 }
 
 // getNodeSecurityGroupIDForLB lists node-security-groups for specific nodes
-func getNodeSecurityGroupIDForLB(compute *gophercloud.ServiceClient, nodes []*v1.Node) ([]string, error) {
-	nodeSecurityGroupIDs := sets.NewString()
+func getNodeSecurityGroupIDForLB(compute *gophercloud.ServiceClient, network *gophercloud.ServiceClient, nodes []*v1.Node) ([]string, error) {
+	secGroupNames := sets.NewString()
 
 	for _, node := range nodes {
 		nodeName := types.NodeName(node.Name)
 		srv, err := getServerByName(compute, nodeName)
 		if err != nil {
-			return nodeSecurityGroupIDs.List(), err
+			return []string{}, err
 		}
 
 		// use the first node-security-groups
@@ -563,11 +578,19 @@ func getNodeSecurityGroupIDForLB(compute *gophercloud.ServiceClient, nodes []*v1
 		// case 1: node1:SG1  node2:SG2  return SG1,SG2
 		// case 2: node1:SG1,SG2  node2:SG3,SG4  return SG1,SG3
 		// case 3: node1:SG1,SG2  node2:SG2,SG3  return SG1,SG2
-		securityGroupName := srv.SecurityGroups[0]["name"]
-		nodeSecurityGroupIDs.Insert(securityGroupName.(string))
+		secGroupNames.Insert(srv.SecurityGroups[0]["name"].(string))
 	}
 
-	return nodeSecurityGroupIDs.List(), nil
+	secGroupIDs := make([]string, secGroupNames.Len())
+	for i, name := range secGroupNames.List() {
+		secGroupID, err := groups.IDFromName(network, name)
+		if err != nil {
+			return []string{}, err
+		}
+		secGroupIDs[i] = secGroupID
+	}
+
+	return secGroupIDs, nil
 }
 
 // isSecurityGroupNotFound return true while 'err' is object of gophercloud.ErrResourceNotFound
@@ -717,7 +740,7 @@ func (lbaas *LbaasV2) EnsureLoadBalancer(ctx context.Context, clusterName string
 		return nil, fmt.Errorf("unsupported load balancer affinity: %v", affinity)
 	}
 
-	name := cloudprovider.GetLoadBalancerName(apiService)
+	name := lbaas.GetLoadBalancerName(ctx, clusterName, apiService)
 	loadbalancer, err := getLoadbalancerByName(lbaas.lb, name)
 	if err != nil {
 		if err != ErrNotFound {
@@ -991,7 +1014,7 @@ func (lbaas *LbaasV2) ensureSecurityGroup(clusterName string, apiService *v1.Ser
 	// find node-security-group for service
 	var err error
 	if len(lbaas.opts.NodeSecurityGroupIDs) == 0 {
-		lbaas.opts.NodeSecurityGroupIDs, err = getNodeSecurityGroupIDForLB(lbaas.compute, nodes)
+		lbaas.opts.NodeSecurityGroupIDs, err = getNodeSecurityGroupIDForLB(lbaas.compute, lbaas.network, nodes)
 		if err != nil {
 			return fmt.Errorf("failed to find node-security-group for loadbalancer service %s/%s: %v", apiService.Namespace, apiService.Name, err)
 		}
@@ -1159,7 +1182,7 @@ func (lbaas *LbaasV2) ensureSecurityGroup(clusterName string, apiService *v1.Ser
 
 // UpdateLoadBalancer updates hosts under the specified load balancer.
 func (lbaas *LbaasV2) UpdateLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) error {
-	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	loadBalancerName := lbaas.GetLoadBalancerName(ctx, clusterName, service)
 	glog.V(4).Infof("UpdateLoadBalancer(%v, %v, %v)", clusterName, loadBalancerName, nodes)
 
 	lbaas.opts.SubnetID = getStringFromServiceAnnotation(service, ServiceAnnotationLoadBalancerSubnetID, lbaas.opts.SubnetID)
@@ -1305,7 +1328,7 @@ func (lbaas *LbaasV2) updateSecurityGroup(clusterName string, apiService *v1.Ser
 	originalNodeSecurityGroupIDs := lbaas.opts.NodeSecurityGroupIDs
 
 	var err error
-	lbaas.opts.NodeSecurityGroupIDs, err = getNodeSecurityGroupIDForLB(lbaas.compute, nodes)
+	lbaas.opts.NodeSecurityGroupIDs, err = getNodeSecurityGroupIDForLB(lbaas.compute, lbaas.network, nodes)
 	if err != nil {
 		return fmt.Errorf("failed to find node-security-group for loadbalancer service %s/%s: %v", apiService.Namespace, apiService.Name, err)
 	}
@@ -1382,7 +1405,7 @@ func (lbaas *LbaasV2) updateSecurityGroup(clusterName string, apiService *v1.Ser
 
 // EnsureLoadBalancerDeleted deletes the specified load balancer
 func (lbaas *LbaasV2) EnsureLoadBalancerDeleted(ctx context.Context, clusterName string, service *v1.Service) error {
-	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	loadBalancerName := lbaas.GetLoadBalancerName(ctx, clusterName, service)
 	glog.V(4).Infof("EnsureLoadBalancerDeleted(%v, %v)", clusterName, loadBalancerName)
 
 	loadbalancer, err := getLoadbalancerByName(lbaas.lb, loadBalancerName)

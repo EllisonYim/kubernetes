@@ -242,6 +242,9 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 				RunAsUser: policy.RunAsUserStrategyOptions{
 					Rule: policy.RunAsUserStrategyRunAsAny,
 				},
+				RunAsGroup: &policy.RunAsGroupStrategyOptions{
+					Rule: policy.RunAsGroupStrategyRunAsAny,
+				},
 				FSGroup: policy.FSGroupStrategyOptions{
 					Rule: policy.FSGroupStrategyRunAsAny,
 				},
@@ -259,11 +262,17 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 	noUserOptions := validPSP()
 	noUserOptions.Spec.RunAsUser.Rule = ""
 
+	noGroupOptions := validPSP()
+	noGroupOptions.Spec.RunAsGroup.Rule = ""
+
 	noSELinuxOptions := validPSP()
 	noSELinuxOptions.Spec.SELinux.Rule = ""
 
 	invalidUserStratType := validPSP()
 	invalidUserStratType.Spec.RunAsUser.Rule = "invalid"
+
+	invalidGroupStratType := validPSP()
+	invalidGroupStratType.Spec.RunAsGroup.Rule = "invalid"
 
 	invalidSELinuxStratType := validPSP()
 	invalidSELinuxStratType.Spec.SELinux.Rule = "invalid"
@@ -271,6 +280,10 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 	invalidUIDPSP := validPSP()
 	invalidUIDPSP.Spec.RunAsUser.Rule = policy.RunAsUserStrategyMustRunAs
 	invalidUIDPSP.Spec.RunAsUser.Ranges = []policy.IDRange{{Min: -1, Max: 1}}
+
+	invalidGIDPSP := validPSP()
+	invalidGIDPSP.Spec.RunAsGroup.Rule = policy.RunAsGroupStrategyMustRunAs
+	invalidGIDPSP.Spec.RunAsGroup.Ranges = []policy.IDRange{{Min: -1, Max: 1}}
 
 	missingObjectMetaName := validPSP()
 	missingObjectMetaName.ObjectMeta.Name = ""
@@ -323,8 +336,19 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 		apparmor.AllowedProfilesAnnotationKey: apparmor.ProfileRuntimeDefault + ",not-good",
 	}
 
-	invalidSysctlPattern := validPSP()
-	invalidSysctlPattern.Annotations[policy.SysctlsPodSecurityPolicyAnnotationKey] = "a.*.b"
+	invalidAllowedUnsafeSysctlPattern := validPSP()
+	invalidAllowedUnsafeSysctlPattern.Spec.AllowedUnsafeSysctls = []string{"a.*.b"}
+
+	invalidForbiddenSysctlPattern := validPSP()
+	invalidForbiddenSysctlPattern.Spec.ForbiddenSysctls = []string{"a.*.b"}
+
+	invalidOverlappingSysctls := validPSP()
+	invalidOverlappingSysctls.Spec.ForbiddenSysctls = []string{"kernel.*", "net.ipv4.ip_local_port_range"}
+	invalidOverlappingSysctls.Spec.AllowedUnsafeSysctls = []string{"kernel.shmmax", "net.ipv4.ip_local_port_range"}
+
+	invalidDuplicatedSysctls := validPSP()
+	invalidDuplicatedSysctls.Spec.ForbiddenSysctls = []string{"net.ipv4.ip_local_port_range"}
+	invalidDuplicatedSysctls.Spec.AllowedUnsafeSysctls = []string{"net.ipv4.ip_local_port_range"}
 
 	invalidSeccompDefault := validPSP()
 	invalidSeccompDefault.Annotations = map[string]string{
@@ -371,6 +395,11 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 			errorType:   field.ErrorTypeNotSupported,
 			errorDetail: `supported values: "MustRunAs", "MustRunAsNonRoot", "RunAsAny"`,
 		},
+		"no group options": {
+			psp:         noGroupOptions,
+			errorType:   field.ErrorTypeNotSupported,
+			errorDetail: `supported values: "MustRunAs", "RunAsAny", "MayRunAs"`,
+		},
 		"no selinux options": {
 			psp:         noSELinuxOptions,
 			errorType:   field.ErrorTypeNotSupported,
@@ -379,17 +408,22 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 		"no fsgroup options": {
 			psp:         noFSGroupOptions,
 			errorType:   field.ErrorTypeNotSupported,
-			errorDetail: `supported values: "MustRunAs", "RunAsAny"`,
+			errorDetail: `supported values: "MayRunAs", "MustRunAs", "RunAsAny"`,
 		},
 		"no sup group options": {
 			psp:         noSupplementalGroupsOptions,
 			errorType:   field.ErrorTypeNotSupported,
-			errorDetail: `supported values: "MustRunAs", "RunAsAny"`,
+			errorDetail: `supported values: "MayRunAs", "MustRunAs", "RunAsAny"`,
 		},
 		"invalid user strategy type": {
 			psp:         invalidUserStratType,
 			errorType:   field.ErrorTypeNotSupported,
 			errorDetail: `supported values: "MustRunAs", "MustRunAsNonRoot", "RunAsAny"`,
+		},
+		"invalid group strategy type": {
+			psp:         invalidGroupStratType,
+			errorType:   field.ErrorTypeNotSupported,
+			errorDetail: `supported values: "MustRunAs", "RunAsAny", "MayRunAs"`,
 		},
 		"invalid selinux strategy type": {
 			psp:         invalidSELinuxStratType,
@@ -399,15 +433,20 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 		"invalid sup group strategy type": {
 			psp:         invalidSupGroupStratType,
 			errorType:   field.ErrorTypeNotSupported,
-			errorDetail: `supported values: "MustRunAs", "RunAsAny"`,
+			errorDetail: `supported values: "MayRunAs", "MustRunAs", "RunAsAny"`,
 		},
 		"invalid fs group strategy type": {
 			psp:         invalidFSGroupStratType,
 			errorType:   field.ErrorTypeNotSupported,
-			errorDetail: `supported values: "MustRunAs", "RunAsAny"`,
+			errorDetail: `supported values: "MayRunAs", "MustRunAs", "RunAsAny"`,
 		},
 		"invalid uid": {
 			psp:         invalidUIDPSP,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: "min cannot be negative",
+		},
+		"invalid gid": {
+			psp:         invalidGIDPSP,
 			errorType:   field.ErrorTypeInvalid,
 			errorDetail: "min cannot be negative",
 		},
@@ -456,10 +495,25 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 			errorType:   field.ErrorTypeInvalid,
 			errorDetail: "invalid AppArmor profile name: \"not-good\"",
 		},
-		"invalid sysctl pattern": {
-			psp:         invalidSysctlPattern,
+		"invalid allowed unsafe sysctl pattern": {
+			psp:         invalidAllowedUnsafeSysctlPattern,
 			errorType:   field.ErrorTypeInvalid,
 			errorDetail: fmt.Sprintf("must have at most 253 characters and match regex %s", SysctlPatternFmt),
+		},
+		"invalid forbidden sysctl pattern": {
+			psp:         invalidForbiddenSysctlPattern,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("must have at most 253 characters and match regex %s", SysctlPatternFmt),
+		},
+		"invalid overlapping sysctl pattern": {
+			psp:         invalidOverlappingSysctls,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("sysctl overlaps with %s", invalidOverlappingSysctls.Spec.ForbiddenSysctls[0]),
+		},
+		"invalid duplicated sysctls": {
+			psp:         invalidDuplicatedSysctls,
+			errorType:   field.ErrorTypeInvalid,
+			errorDetail: fmt.Sprintf("sysctl overlaps with %s", invalidDuplicatedSysctls.Spec.AllowedUnsafeSysctls[0]),
 		},
 		"invalid seccomp default profile": {
 			psp:         invalidSeccompDefault,
@@ -561,8 +615,11 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 		apparmor.AllowedProfilesAnnotationKey: apparmor.ProfileRuntimeDefault + "," + apparmor.ProfileNamePrefix + "foo",
 	}
 
-	withSysctl := validPSP()
-	withSysctl.Annotations[policy.SysctlsPodSecurityPolicyAnnotationKey] = "net.*"
+	withForbiddenSysctl := validPSP()
+	withForbiddenSysctl.Spec.ForbiddenSysctls = []string{"net.*"}
+
+	withAllowedUnsafeSysctl := validPSP()
+	withAllowedUnsafeSysctl.Spec.AllowedUnsafeSysctls = []string{"net.ipv4.tcp_max_syn_backlog"}
 
 	validSeccomp := validPSP()
 	validSeccomp.Annotations = map[string]string{
@@ -607,8 +664,11 @@ func TestValidatePodSecurityPolicy(t *testing.T) {
 		"valid AppArmor annotations": {
 			psp: validAppArmor,
 		},
-		"with network sysctls": {
-			psp: withSysctl,
+		"with network sysctls forbidden": {
+			psp: withForbiddenSysctl,
+		},
+		"with unsafe net.ipv4.tcp_max_syn_backlog sysctl allowed": {
+			psp: withAllowedUnsafeSysctl,
 		},
 		"valid seccomp annotations": {
 			psp: validSeccomp,
@@ -647,6 +707,9 @@ func TestValidatePSPVolumes(t *testing.T) {
 				},
 				RunAsUser: policy.RunAsUserStrategyOptions{
 					Rule: policy.RunAsUserStrategyRunAsAny,
+				},
+				RunAsGroup: &policy.RunAsGroupStrategyOptions{
+					Rule: policy.RunAsGroupStrategyRunAsAny,
 				},
 				FSGroup: policy.FSGroupStrategyOptions{
 					Rule: policy.FSGroupStrategyRunAsAny,

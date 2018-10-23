@@ -21,12 +21,14 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 
-	kubeadmapiv1alpha2 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1alpha2"
+	"k8s.io/apimachinery/pkg/util/version"
+	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/validation"
 	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/upgrade"
@@ -36,14 +38,15 @@ import (
 )
 
 type planFlags struct {
+	*applyPlanFlags
+
 	newK8sVersionStr string
-	parent           *cmdUpgradeFlags
 }
 
 // NewCmdPlan returns the cobra command for `kubeadm upgrade plan`
-func NewCmdPlan(parentFlags *cmdUpgradeFlags) *cobra.Command {
+func NewCmdPlan(apf *applyPlanFlags) *cobra.Command {
 	flags := &planFlags{
-		parent: parentFlags,
+		applyPlanFlags: apf,
 	}
 
 	cmd := &cobra.Command{
@@ -51,16 +54,16 @@ func NewCmdPlan(parentFlags *cmdUpgradeFlags) *cobra.Command {
 		Short: "Check which versions are available to upgrade to and validate whether your current cluster is upgradeable. To skip the internet check, pass in the optional [version] parameter.",
 		Run: func(_ *cobra.Command, args []string) {
 			var err error
-			parentFlags.ignorePreflightErrorsSet, err = validation.ValidateIgnorePreflightErrors(parentFlags.ignorePreflightErrors, parentFlags.skipPreFlight)
+			flags.ignorePreflightErrorsSet, err = validation.ValidateIgnorePreflightErrors(flags.ignorePreflightErrors)
 			kubeadmutil.CheckErr(err)
 			// Ensure the user is root
-			err = runPreflightChecks(parentFlags.ignorePreflightErrorsSet)
+			err = runPreflightChecks(flags.ignorePreflightErrorsSet)
 			kubeadmutil.CheckErr(err)
 
 			// If the version is specified in config file, pick up that value.
-			if parentFlags.cfgPath != "" {
-				glog.V(1).Infof("fetching configuration from file", parentFlags.cfgPath)
-				cfg, err := configutil.ConfigFileAndDefaultsToInternalConfig(parentFlags.cfgPath, &kubeadmapiv1alpha2.MasterConfiguration{})
+			if flags.cfgPath != "" {
+				glog.V(1).Infof("fetching configuration from file %s", flags.cfgPath)
+				cfg, err := configutil.ConfigFileAndDefaultsToInternalConfig(flags.cfgPath, &kubeadmapiv1beta1.InitConfiguration{})
 				kubeadmutil.CheckErr(err)
 
 				if cfg.KubernetesVersion != "" {
@@ -77,6 +80,8 @@ func NewCmdPlan(parentFlags *cmdUpgradeFlags) *cobra.Command {
 		},
 	}
 
+	// Register the common flags for apply and plan
+	addApplyPlanFlags(cmd.Flags(), flags.applyPlanFlags)
 	return cmd
 }
 
@@ -85,7 +90,7 @@ func RunPlan(flags *planFlags) error {
 	// Start with the basics, verify that the cluster is healthy, build a client and a versionGetter. Never dry-run when planning.
 	glog.V(1).Infof("[upgrade/plan] verifying health of cluster")
 	glog.V(1).Infof("[upgrade/plan] retrieving configuration from cluster")
-	upgradeVars, err := enforceRequirements(flags.parent, false, flags.newK8sVersionStr)
+	upgradeVars, err := enforceRequirements(flags.applyPlanFlags, false, flags.newK8sVersionStr)
 	if err != nil {
 		return err
 	}
@@ -94,20 +99,20 @@ func RunPlan(flags *planFlags) error {
 
 	// Currently this is the only method we have for distinguishing
 	// external etcd vs static pod etcd
-	isExternalEtcd := len(upgradeVars.cfg.Etcd.Endpoints) > 0
+	isExternalEtcd := upgradeVars.cfg.Etcd.External != nil
 	if isExternalEtcd {
 		client, err := etcdutil.New(
-			upgradeVars.cfg.Etcd.Endpoints,
-			upgradeVars.cfg.Etcd.CAFile,
-			upgradeVars.cfg.Etcd.CertFile,
-			upgradeVars.cfg.Etcd.KeyFile)
+			upgradeVars.cfg.Etcd.External.Endpoints,
+			upgradeVars.cfg.Etcd.External.CAFile,
+			upgradeVars.cfg.Etcd.External.CertFile,
+			upgradeVars.cfg.Etcd.External.KeyFile)
 		if err != nil {
 			return err
 		}
 		etcdClient = client
 	} else {
 		client, err := etcdutil.NewFromStaticPod(
-			[]string{"localhost:2379"},
+			[]string{fmt.Sprintf("localhost:%d", constants.EtcdListenClientPort)},
 			constants.GetStaticPodDirectory(),
 			upgradeVars.cfg.CertificatesDir,
 		)
@@ -119,7 +124,7 @@ func RunPlan(flags *planFlags) error {
 
 	// Compute which upgrade possibilities there are
 	glog.V(1).Infof("[upgrade/plan] computing upgrade possibilities")
-	availUpgrades, err := upgrade.GetAvailableUpgrades(upgradeVars.versionGetter, flags.parent.allowExperimentalUpgrades, flags.parent.allowRCUpgrades, etcdClient, upgradeVars.cfg.FeatureGates, upgradeVars.client)
+	availUpgrades, err := upgrade.GetAvailableUpgrades(upgradeVars.versionGetter, flags.allowExperimentalUpgrades, flags.allowRCUpgrades, etcdClient, upgradeVars.cfg.FeatureGates, upgradeVars.client)
 	if err != nil {
 		return fmt.Errorf("[upgrade/versions] FATAL: %v", err)
 	}
@@ -143,6 +148,21 @@ func printAvailableUpgrades(upgrades []upgrade.Upgrade, w io.Writer, isExternalE
 
 	// Loop through the upgrade possibilities and output text to the command line
 	for _, upgrade := range upgrades {
+
+		newK8sVersion, err := version.ParseSemantic(upgrade.After.KubeVersion)
+		if err != nil {
+			fmt.Fprintf(w, "Unable to parse normalized version %q as a semantic version\n", upgrade.After.KubeVersion)
+			continue
+		}
+
+		UnstableVersionFlag := ""
+		if len(newK8sVersion.PreRelease()) != 0 {
+			if strings.HasPrefix(newK8sVersion.PreRelease(), "rc") {
+				UnstableVersionFlag = " --allow-release-candidate-upgrades"
+			} else {
+				UnstableVersionFlag = " --allow-experimental-upgrades"
+			}
+		}
 
 		if isExternalEtcd && upgrade.CanUpgradeEtcd() {
 			fmt.Fprintln(w, "External components that should be upgraded manually before you upgrade the control plane with 'kubeadm upgrade apply':")
@@ -223,7 +243,7 @@ func printAvailableUpgrades(upgrades []upgrade.Upgrade, w io.Writer, isExternalE
 		fmt.Fprintln(w, "")
 		fmt.Fprintln(w, "You can now apply the upgrade by executing the following command:")
 		fmt.Fprintln(w, "")
-		fmt.Fprintf(w, "\tkubeadm upgrade apply %s\n", upgrade.After.KubeVersion)
+		fmt.Fprintf(w, "\tkubeadm upgrade apply %s%s\n", upgrade.After.KubeVersion, UnstableVersionFlag)
 		fmt.Fprintln(w, "")
 
 		if upgrade.Before.KubeadmVersion != upgrade.After.KubeadmVersion {

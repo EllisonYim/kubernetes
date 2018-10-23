@@ -41,9 +41,9 @@ var (
 	moreForeverTestTimeout = 2 * 60 * time.Second
 )
 
-var _ = SIGDescribe("DNS configMap federations", func() {
+var _ = SIGDescribe("DNS configMap federations [Feature:Federation]", func() {
 
-	t := &dnsNameserverTest{dnsTestCommon: newDnsTestCommon()}
+	t := &dnsFederationsConfigMapTest{dnsTestCommon: newDnsTestCommon()}
 
 	It("should be able to change federation configuration [Slow][Serial]", func() {
 		t.c = t.f.ClientSet
@@ -55,41 +55,99 @@ func (t *dnsFederationsConfigMapTest) run() {
 	t.init()
 
 	defer t.c.CoreV1().ConfigMaps(t.ns).Delete(t.name, nil)
-	t.createUtilPod()
+	t.createUtilPodLabel("e2e-dns-configmap")
 	defer t.deleteUtilPod()
+	originalConfigMapData := t.fetchDNSConfigMapData()
+	defer t.restoreDNSConfigMap(originalConfigMapData)
 
 	t.validate()
 
-	t.labels = []string{"abc", "ghi"}
-	valid1 := map[string]string{"federations": t.labels[0] + "=def"}
-	valid1m := map[string]string{t.labels[0]: "def"}
-	valid2 := map[string]string{"federations": t.labels[1] + "=xyz"}
-	valid2m := map[string]string{t.labels[1]: "xyz"}
-	invalid := map[string]string{"federations": "invalid.map=xyz"}
+	if t.name == "coredns" {
+		t.labels = []string{"abc", "ghi"}
+		defaultConfig := map[string]string{
+			"Corefile": `.:53 {
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           upstream
+           fallthrough in-addr.arpa ip6.arpa
+        }
+    }`}
 
-	By("empty -> valid1")
-	t.setConfigMap(&v1.ConfigMap{Data: valid1}, valid1m, true)
-	t.validate()
+		valid1 := map[string]string{
+			"Corefile": `.:53 {
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            upstream
+            fallthrough in-addr.arpa ip6.arpa
+        }
+        federation cluster.local {
+           abc def.com
+        }
+        proxy . /etc/resolv.conf
+    }`}
+		valid1m := map[string]string{t.labels[0]: "def.com"}
 
-	By("valid1 -> valid2")
-	t.setConfigMap(&v1.ConfigMap{Data: valid2}, valid2m, true)
-	t.validate()
+		valid2 := map[string]string{
+			"Corefile": `:53 {
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            upstream
+            fallthrough in-addr.arpa ip6.arpa
+        }
+        federation cluster.local {
+           ghi xyz.com
+        }
+        proxy . /etc/resolv.conf
+    }`}
+		valid2m := map[string]string{t.labels[1]: "xyz.com"}
 
-	By("valid2 -> invalid")
-	t.setConfigMap(&v1.ConfigMap{Data: invalid}, nil, false)
-	t.validate()
+		By("default -> valid1")
+		t.setConfigMap(&v1.ConfigMap{Data: valid1}, valid1m, true)
+		t.deleteCoreDNSPods()
+		t.validate()
 
-	By("invalid -> valid1")
-	t.setConfigMap(&v1.ConfigMap{Data: valid1}, valid1m, true)
-	t.validate()
+		By("valid1 -> valid2")
+		t.setConfigMap(&v1.ConfigMap{Data: valid2}, valid2m, true)
+		t.deleteCoreDNSPods()
+		t.validate()
 
-	By("valid1 -> deleted")
-	t.deleteConfigMap()
-	t.validate()
+		By("valid2 -> default")
+		t.setConfigMap(&v1.ConfigMap{Data: defaultConfig}, nil, false)
+		t.deleteCoreDNSPods()
+		t.validate()
 
-	By("deleted -> invalid")
-	t.setConfigMap(&v1.ConfigMap{Data: invalid}, nil, false)
-	t.validate()
+	} else {
+		t.labels = []string{"abc", "ghi"}
+		valid1 := map[string]string{"federations": t.labels[0] + "=def"}
+		valid1m := map[string]string{t.labels[0]: "def"}
+		valid2 := map[string]string{"federations": t.labels[1] + "=xyz"}
+		valid2m := map[string]string{t.labels[1]: "xyz"}
+		invalid := map[string]string{"federations": "invalid.map=xyz"}
+
+		By("empty -> valid1")
+		t.setConfigMap(&v1.ConfigMap{Data: valid1}, valid1m, true)
+		t.validate()
+
+		By("valid1 -> valid2")
+		t.setConfigMap(&v1.ConfigMap{Data: valid2}, valid2m, true)
+		t.validate()
+
+		By("valid2 -> invalid")
+		t.setConfigMap(&v1.ConfigMap{Data: invalid}, nil, false)
+		t.validate()
+
+		By("invalid -> valid1")
+		t.setConfigMap(&v1.ConfigMap{Data: valid1}, valid1m, true)
+		t.validate()
+
+		By("valid1 -> deleted")
+		t.deleteConfigMap()
+		t.validate()
+
+		By("deleted -> invalid")
+		t.setConfigMap(&v1.ConfigMap{Data: invalid}, nil, false)
+		t.validate()
+	}
 }
 
 func (t *dnsFederationsConfigMapTest) validate() {
@@ -104,7 +162,7 @@ func (t *dnsFederationsConfigMapTest) validate() {
 			predicate := func(actual []string) bool {
 				return len(actual) == 0
 			}
-			t.checkDNSRecord(federationDNS, predicate, wait.ForeverTestTimeout)
+			t.checkDNSRecordFrom(federationDNS, predicate, "cluster-dns", wait.ForeverTestTimeout)
 		}
 	} else {
 		for label := range federations {
@@ -112,6 +170,9 @@ func (t *dnsFederationsConfigMapTest) validate() {
 				t.utilService.ObjectMeta.Name, t.f.Namespace.Name, label)
 			var localDNS = fmt.Sprintf("%s.%s.svc.cluster.local.",
 				t.utilService.ObjectMeta.Name, t.f.Namespace.Name)
+			if t.name == "coredns" {
+				localDNS = t.utilService.Spec.ClusterIP
+			}
 			// Check local mapping. Checking a remote mapping requires
 			// creating an arbitrary DNS record which is not possible at the
 			// moment.
@@ -124,12 +185,14 @@ func (t *dnsFederationsConfigMapTest) validate() {
 				}
 				return false
 			}
-			t.checkDNSRecord(federationDNS, predicate, wait.ForeverTestTimeout)
+			t.checkDNSRecordFrom(federationDNS, predicate, "cluster-dns", wait.ForeverTestTimeout)
 		}
 	}
 }
 
 func (t *dnsFederationsConfigMapTest) setConfigMap(cm *v1.ConfigMap, fedMap map[string]string, isValid bool) {
+	t.fedMap = nil
+
 	if isValid {
 		t.fedMap = fedMap
 	}
@@ -149,8 +212,10 @@ type dnsNameserverTest struct {
 func (t *dnsNameserverTest) run() {
 	t.init()
 
-	t.createUtilPod()
+	t.createUtilPodLabel("e2e-dns-configmap")
 	defer t.deleteUtilPod()
+	originalConfigMapData := t.fetchDNSConfigMapData()
+	defer t.restoreDNSConfigMap(originalConfigMapData)
 
 	t.createDNSServer(map[string]string{
 		"abc.acme.local": "1.1.1.1",
@@ -159,34 +224,52 @@ func (t *dnsNameserverTest) run() {
 	})
 	defer t.deleteDNSServerPod()
 
-	t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
-		"stubDomains":         fmt.Sprintf(`{"acme.local":["%v"]}`, t.dnsServerPod.Status.PodIP),
-		"upstreamNameservers": fmt.Sprintf(`["%v"]`, t.dnsServerPod.Status.PodIP),
-	}})
+	if t.name == "coredns" {
+		t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
+			"Corefile": fmt.Sprintf(`.:53 {
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           upstream
+           fallthrough in-addr.arpa ip6.arpa
+        }
+        proxy . %v
+    }
+     acme.local:53 {
+       proxy . %v
+    }`, t.dnsServerPod.Status.PodIP, t.dnsServerPod.Status.PodIP),
+		}})
+
+		t.deleteCoreDNSPods()
+	} else {
+		t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
+			"stubDomains":         fmt.Sprintf(`{"acme.local":["%v"]}`, t.dnsServerPod.Status.PodIP),
+			"upstreamNameservers": fmt.Sprintf(`["%v"]`, t.dnsServerPod.Status.PodIP),
+		}})
+	}
 
 	t.checkDNSRecordFrom(
 		"abc.acme.local",
 		func(actual []string) bool { return len(actual) == 1 && actual[0] == "1.1.1.1" },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 	t.checkDNSRecordFrom(
 		"def.acme.local",
 		func(actual []string) bool { return len(actual) == 1 && actual[0] == "2.2.2.2" },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 	t.checkDNSRecordFrom(
 		"widget.local",
 		func(actual []string) bool { return len(actual) == 1 && actual[0] == "3.3.3.3" },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 
-	t.c.CoreV1().ConfigMaps(t.ns).Delete(t.name, nil)
+	t.restoreDNSConfigMap(originalConfigMapData)
 	// Wait for the deleted ConfigMap to take effect, otherwise the
 	// configuration can bleed into other tests.
 	t.checkDNSRecordFrom(
 		"abc.acme.local",
 		func(actual []string) bool { return len(actual) == 0 },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 }
 
@@ -197,8 +280,10 @@ type dnsPtrFwdTest struct {
 func (t *dnsPtrFwdTest) run() {
 	t.init()
 
-	t.createUtilPod()
+	t.createUtilPodLabel("e2e-dns-configmap")
 	defer t.deleteUtilPod()
+	originalConfigMapData := t.fetchDNSConfigMapData()
+	defer t.restoreDNSConfigMap(originalConfigMapData)
 
 	t.createDNSServerWithPtrRecord()
 	defer t.deleteDNSServerPod()
@@ -207,24 +292,39 @@ func (t *dnsPtrFwdTest) run() {
 	t.checkDNSRecordFrom(
 		"8.8.8.8.in-addr.arpa",
 		func(actual []string) bool { return len(actual) == 1 && actual[0] == googleDnsHostname+"." },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 
-	t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
-		"upstreamNameservers": fmt.Sprintf(`["%v"]`, t.dnsServerPod.Status.PodIP),
-	}})
+	if t.name == "coredns" {
+		t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
+			"Corefile": fmt.Sprintf(`.:53 {
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           upstream
+           fallthrough in-addr.arpa ip6.arpa
+        }
+        proxy . %v
+    }`, t.dnsServerPod.Status.PodIP),
+		}})
+
+		t.deleteCoreDNSPods()
+	} else {
+		t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
+			"upstreamNameservers": fmt.Sprintf(`["%v"]`, t.dnsServerPod.Status.PodIP),
+		}})
+	}
 
 	t.checkDNSRecordFrom(
 		"123.2.0.192.in-addr.arpa",
 		func(actual []string) bool { return len(actual) == 1 && actual[0] == "my.test." },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 
-	t.setConfigMap(&v1.ConfigMap{Data: map[string]string{}})
+	t.restoreDNSConfigMap(originalConfigMapData)
 	t.checkDNSRecordFrom(
 		"123.2.0.192.in-addr.arpa",
 		func(actual []string) bool { return len(actual) == 0 },
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 }
 
@@ -235,8 +335,10 @@ type dnsExternalNameTest struct {
 func (t *dnsExternalNameTest) run() {
 	t.init()
 
-	t.createUtilPod()
+	t.createUtilPodLabel("e2e-dns-configmap")
 	defer t.deleteUtilPod()
+	originalConfigMapData := t.fetchDNSConfigMapData()
+	defer t.restoreDNSConfigMap(originalConfigMapData)
 
 	fooHostname := "foo.example.com"
 	t.createDNSServer(map[string]string{
@@ -267,22 +369,37 @@ func (t *dnsExternalNameTest) run() {
 		func(actual []string) bool {
 			return len(actual) >= 1 && actual[0] == googleDnsHostname+"."
 		},
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 
-	t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
-		"upstreamNameservers": fmt.Sprintf(`["%v"]`, t.dnsServerPod.Status.PodIP),
-	}})
+	if t.name == "coredns" {
+		t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
+			"Corefile": fmt.Sprintf(`.:53 {
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           upstream
+           fallthrough in-addr.arpa ip6.arpa
+        }
+        proxy . %v
+    }`, t.dnsServerPod.Status.PodIP),
+		}})
+
+		t.deleteCoreDNSPods()
+	} else {
+		t.setConfigMap(&v1.ConfigMap{Data: map[string]string{
+			"upstreamNameservers": fmt.Sprintf(`["%v"]`, t.dnsServerPod.Status.PodIP),
+		}})
+	}
 
 	t.checkDNSRecordFrom(
 		fmt.Sprintf("%s.%s.svc.cluster.local", serviceNameLocal, f.Namespace.Name),
 		func(actual []string) bool {
 			return len(actual) == 2 && actual[0] == fooHostname+"." && actual[1] == "192.0.2.123"
 		},
-		"dnsmasq",
+		"cluster-dns",
 		moreForeverTestTimeout)
 
-	t.setConfigMap(&v1.ConfigMap{Data: map[string]string{}})
+	t.restoreDNSConfigMap(originalConfigMapData)
 }
 
 var _ = SIGDescribe("DNS configMap nameserver", func() {

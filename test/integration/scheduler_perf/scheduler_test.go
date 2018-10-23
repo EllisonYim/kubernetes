@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/kubernetes/pkg/scheduler"
+	"k8s.io/kubernetes/pkg/scheduler/factory"
 	testutils "k8s.io/kubernetes/test/utils"
 	"math"
 	"strconv"
@@ -105,7 +105,7 @@ type testConfig struct {
 	numNodes                  int
 	mutatedNodeTemplate       *v1.Node
 	mutatedPodTemplate        *v1.Pod
-	schedulerSupportFunctions scheduler.Configurator
+	schedulerSupportFunctions factory.Configurator
 	destroyFunc               func()
 }
 
@@ -162,8 +162,12 @@ func schedulePods(config *testConfig) int32 {
 		// return the worst-case-scenario interval that was seen during this time.
 		// Note this should never be low due to cold-start, so allow bake in sched time if necessary.
 		if len(scheduled) >= config.numPods {
+			consumed := int(time.Since(start) / time.Second)
+			if consumed <= 0 {
+				consumed = 1
+			}
 			fmt.Printf("Scheduled %v Pods in %v seconds (%v per second on average). min QPS was %v\n",
-				config.numPods, int(time.Since(start)/time.Second), config.numPods/int(time.Since(start)/time.Second), minQps)
+				config.numPods, consumed, config.numPods/consumed, minQps)
 			return minQps
 		}
 

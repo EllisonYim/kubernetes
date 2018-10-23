@@ -25,7 +25,7 @@ import (
 
 func TestPrintConfiguration(t *testing.T) {
 	var tests = []struct {
-		cfg           *kubeadmapi.MasterConfiguration
+		cfg           *kubeadmapi.ClusterConfiguration
 		buf           *bytes.Buffer
 		expectedBytes []byte
 	}{
@@ -34,123 +34,68 @@ func TestPrintConfiguration(t *testing.T) {
 			expectedBytes: []byte(""),
 		},
 		{
-			cfg: &kubeadmapi.MasterConfiguration{
+			cfg: &kubeadmapi.ClusterConfiguration{
 				KubernetesVersion: "v1.7.1",
+				Etcd: kubeadmapi.Etcd{
+					Local: &kubeadmapi.LocalEtcd{
+						DataDir: "/some/path",
+					},
+				},
 			},
 			expectedBytes: []byte(`[upgrade/config] Configuration used:
-	api:
-	  advertiseAddress: ""
-	  bindPort: 0
-	  controlPlaneEndpoint: ""
-	apiVersion: kubeadm.k8s.io/v1alpha2
+	apiVersion: kubeadm.k8s.io/v1beta1
 	auditPolicy:
 	  logDir: ""
 	  path: ""
 	certificatesDir: ""
+	controlPlaneEndpoint: ""
 	etcd:
-	  caFile: ""
-	  certFile: ""
-	  dataDir: ""
-	  endpoints: null
-	  image: ""
-	  keyFile: ""
+	  local:
+	    dataDir: /some/path
+	    image: ""
 	imageRepository: ""
-	kind: MasterConfiguration
-	kubeProxy: {}
-	kubeletConfiguration: {}
+	kind: ClusterConfiguration
 	kubernetesVersion: v1.7.1
 	networking:
 	  dnsDomain: ""
 	  podSubnet: ""
 	  serviceSubnet: ""
-	nodeName: ""
-	token: ""
 	unifiedControlPlaneImage: ""
 `),
 		},
 		{
-			cfg: &kubeadmapi.MasterConfiguration{
+			cfg: &kubeadmapi.ClusterConfiguration{
 				KubernetesVersion: "v1.7.1",
 				Networking: kubeadmapi.Networking{
 					ServiceSubnet: "10.96.0.1/12",
 				},
+				Etcd: kubeadmapi.Etcd{
+					External: &kubeadmapi.ExternalEtcd{
+						Endpoints: []string{"https://one-etcd-instance:2379"},
+					},
+				},
 			},
 			expectedBytes: []byte(`[upgrade/config] Configuration used:
-	api:
-	  advertiseAddress: ""
-	  bindPort: 0
-	  controlPlaneEndpoint: ""
-	apiVersion: kubeadm.k8s.io/v1alpha2
+	apiVersion: kubeadm.k8s.io/v1beta1
 	auditPolicy:
 	  logDir: ""
 	  path: ""
 	certificatesDir: ""
+	controlPlaneEndpoint: ""
 	etcd:
-	  caFile: ""
-	  certFile: ""
-	  dataDir: ""
-	  endpoints: null
-	  image: ""
-	  keyFile: ""
+	  external:
+	    caFile: ""
+	    certFile: ""
+	    endpoints:
+	    - https://one-etcd-instance:2379
+	    keyFile: ""
 	imageRepository: ""
-	kind: MasterConfiguration
-	kubeProxy: {}
-	kubeletConfiguration: {}
+	kind: ClusterConfiguration
 	kubernetesVersion: v1.7.1
 	networking:
 	  dnsDomain: ""
 	  podSubnet: ""
 	  serviceSubnet: 10.96.0.1/12
-	nodeName: ""
-	token: ""
-	unifiedControlPlaneImage: ""
-`),
-		},
-		{
-			cfg: &kubeadmapi.MasterConfiguration{
-				KubernetesVersion: "v1.7.1",
-				Etcd: kubeadmapi.Etcd{
-					SelfHosted: &kubeadmapi.SelfHostedEtcd{
-						CertificatesDir:    "/var/foo",
-						ClusterServiceName: "foo",
-						EtcdVersion:        "v0.1.0",
-						OperatorVersion:    "v0.1.0",
-					},
-				},
-			},
-			expectedBytes: []byte(`[upgrade/config] Configuration used:
-	api:
-	  advertiseAddress: ""
-	  bindPort: 0
-	  controlPlaneEndpoint: ""
-	apiVersion: kubeadm.k8s.io/v1alpha2
-	auditPolicy:
-	  logDir: ""
-	  path: ""
-	certificatesDir: ""
-	etcd:
-	  caFile: ""
-	  certFile: ""
-	  dataDir: ""
-	  endpoints: null
-	  image: ""
-	  keyFile: ""
-	  selfHosted:
-	    certificatesDir: /var/foo
-	    clusterServiceName: foo
-	    etcdVersion: v0.1.0
-	    operatorVersion: v0.1.0
-	imageRepository: ""
-	kind: MasterConfiguration
-	kubeProxy: {}
-	kubeletConfiguration: {}
-	kubernetesVersion: v1.7.1
-	networking:
-	  dnsDomain: ""
-	  podSubnet: ""
-	  serviceSubnet: ""
-	nodeName: ""
-	token: ""
 	unifiedControlPlaneImage: ""
 `),
 		},

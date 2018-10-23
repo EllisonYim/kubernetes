@@ -20,8 +20,8 @@ import (
 	"context"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/apis/audit"
+	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/user"
 )
 
@@ -35,14 +35,11 @@ const (
 	// userKey is the context key for the request user.
 	userKey
 
-	// uidKey is the context key for the uid to assign to an object on create.
-	uidKey
-
-	// userAgentKey is the context key for the request user agent.
-	userAgentKey
-
 	// auditKey is the context key for the audit event.
 	auditKey
+
+	// audiencesKey is the context key for request audiences.
+	audiencesKey
 )
 
 // NewContext instantiates a base context object for request flows.
@@ -77,15 +74,6 @@ func NamespaceValue(ctx context.Context) string {
 	return namespace
 }
 
-// WithNamespaceDefaultIfNone returns a context whose namespace is the default if and only if the parent context has no namespace value
-func WithNamespaceDefaultIfNone(parent context.Context) context.Context {
-	namespace, ok := NamespaceFrom(parent)
-	if !ok || len(namespace) == 0 {
-		return WithNamespace(parent, metav1.NamespaceDefault)
-	}
-	return parent
-}
-
 // WithUser returns a copy of parent in which the user value is set
 func WithUser(parent context.Context, user user.Info) context.Context {
 	return WithValue(parent, userKey, user)
@@ -97,17 +85,6 @@ func UserFrom(ctx context.Context) (user.Info, bool) {
 	return user, ok
 }
 
-// WithUID returns a copy of parent in which the uid value is set
-func WithUID(parent context.Context, uid types.UID) context.Context {
-	return WithValue(parent, uidKey, uid)
-}
-
-// UIDFrom returns the value of the uid key on the ctx
-func UIDFrom(ctx context.Context) (types.UID, bool) {
-	uid, ok := ctx.Value(uidKey).(types.UID)
-	return uid, ok
-}
-
 // WithAuditEvent returns set audit event struct.
 func WithAuditEvent(parent context.Context, ev *audit.Event) context.Context {
 	return WithValue(parent, auditKey, ev)
@@ -117,4 +94,15 @@ func WithAuditEvent(parent context.Context, ev *audit.Event) context.Context {
 func AuditEventFrom(ctx context.Context) *audit.Event {
 	ev, _ := ctx.Value(auditKey).(*audit.Event)
 	return ev
+}
+
+// WithAudiences returns a context that stores a request's expected audiences.
+func WithAudiences(ctx context.Context, auds authenticator.Audiences) context.Context {
+	return context.WithValue(ctx, audiencesKey, auds)
+}
+
+// AudiencesFrom returns a request's expected audiences stored in the request context.
+func AudiencesFrom(ctx context.Context) (authenticator.Audiences, bool) {
+	auds, ok := ctx.Value(audiencesKey).(authenticator.Audiences)
+	return auds, ok
 }

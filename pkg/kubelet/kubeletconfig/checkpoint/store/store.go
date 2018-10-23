@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/kubernetes/pkg/kubelet/apis/kubeletconfig"
+	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/kubeletconfig/checkpoint"
 )
 
@@ -30,6 +30,7 @@ type Store interface {
 	Initialize() error
 
 	// Exists returns true if the object referenced by `source` has been checkpointed.
+	// The source must be unambiguous - e.g. if referencing an API object it must specify both uid and resourceVersion.
 	Exists(source checkpoint.RemoteConfigSource) (bool, error)
 	// Save Kubelet config payloads to the storage layer. It must be possible to unmarshal the payload to a KubeletConfiguration.
 	// The following payload types are supported:

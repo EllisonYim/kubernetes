@@ -38,6 +38,7 @@ const TagNameKubernetesClusterPrefix = "kubernetes.io/cluster/"
 // did not allow shared resources.
 const TagNameKubernetesClusterLegacy = "KubernetesCluster"
 
+// ResourceLifecycle is the cluster lifecycle state used in tagging
 type ResourceLifecycle string
 
 const (
@@ -138,10 +139,10 @@ func (t *awsTagging) hasClusterTag(tags []*ec2.Tag) bool {
 	for _, tag := range tags {
 		tagKey := aws.StringValue(tag.Key)
 		// For 1.6, we continue to recognize the legacy tags, for the 1.5 -> 1.6 upgrade
-		if tagKey == TagNameKubernetesClusterLegacy {
-			return aws.StringValue(tag.Value) == t.ClusterID
+		// Note that we want to continue traversing tag list if we see a legacy tag with value != ClusterID
+		if (tagKey == TagNameKubernetesClusterLegacy) && (aws.StringValue(tag.Value) == t.ClusterID) {
+			return true
 		}
-
 		if tagKey == clusterTagKey {
 			return true
 		}
@@ -152,13 +153,13 @@ func (t *awsTagging) hasClusterTag(tags []*ec2.Tag) bool {
 // Ensure that a resource has the correct tags
 // If it has no tags, we assume that this was a problem caused by an error in between creation and tagging,
 // and we add the tags.  If it has a different cluster's tags, that is an error.
-func (c *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecycle ResourceLifecycle, additionalTags map[string]string, observedTags []*ec2.Tag) error {
+func (t *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecycle ResourceLifecycle, additionalTags map[string]string, observedTags []*ec2.Tag) error {
 	actualTagMap := make(map[string]string)
 	for _, tag := range observedTags {
 		actualTagMap[aws.StringValue(tag.Key)] = aws.StringValue(tag.Value)
 	}
 
-	expectedTags := c.buildTags(lifecycle, additionalTags)
+	expectedTags := t.buildTags(lifecycle, additionalTags)
 
 	addTags := make(map[string]string)
 	for k, expected := range expectedTags {
@@ -178,7 +179,7 @@ func (c *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecy
 		return nil
 	}
 
-	if err := c.createTags(client, resourceID, lifecycle, addTags); err != nil {
+	if err := t.createTags(client, resourceID, lifecycle, addTags); err != nil {
 		return fmt.Errorf("error adding missing tags to resource %q: %q", resourceID, err)
 	}
 

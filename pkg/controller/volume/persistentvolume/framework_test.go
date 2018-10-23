@@ -612,6 +612,7 @@ func newTestController(kubeClient clientset.Interface, informerFactory informers
 		ClaimInformer:             informerFactory.Core().V1().PersistentVolumeClaims(),
 		ClassInformer:             informerFactory.Storage().V1().StorageClasses(),
 		PodInformer:               informerFactory.Core().V1().Pods(),
+		NodeInformer:              informerFactory.Core().V1().Nodes(),
 		EventRecorder:             record.NewFakeRecorder(1000),
 		EnableDynamicProvisioning: enableDynamicProvisioning,
 	}
@@ -1192,7 +1193,7 @@ func (plugin *mockVolumePlugin) NewProvisioner(options vol.VolumeOptions) (vol.P
 	}
 }
 
-func (plugin *mockVolumePlugin) Provision() (*v1.PersistentVolume, error) {
+func (plugin *mockVolumePlugin) Provision(selectedNode *v1.Node, allowedTopologies []v1.TopologySelectorTerm) (*v1.PersistentVolume, error) {
 	if len(plugin.provisionCalls) <= plugin.provisionCallCounter {
 		return nil, fmt.Errorf("Mock plugin error: unexpected provisioner call %d", plugin.provisionCallCounter)
 	}
@@ -1220,6 +1221,9 @@ func (plugin *mockVolumePlugin) Provision() (*v1.PersistentVolume, error) {
 				PersistentVolumeSource: v1.PersistentVolumeSource{
 					GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{},
 				},
+			},
+			Status: v1.PersistentVolumeStatus{
+				Phase: v1.VolumeAvailable,
 			},
 		}
 	}

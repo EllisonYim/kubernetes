@@ -30,9 +30,11 @@ import (
 	internalclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	admissionregistration "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/admissionregistration"
 	apps "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/apps"
+	auditregistration "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/auditregistration"
 	autoscaling "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/autoscaling"
 	batch "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/batch"
 	certificates "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/certificates"
+	coordination "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/coordination"
 	core "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/core"
 	extensions "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/extensions"
 	internalinterfaces "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/internalinterfaces"
@@ -186,9 +188,11 @@ type SharedInformerFactory interface {
 
 	Admissionregistration() admissionregistration.Interface
 	Apps() apps.Interface
+	Auditregistration() auditregistration.Interface
 	Autoscaling() autoscaling.Interface
 	Batch() batch.Interface
 	Certificates() certificates.Interface
+	Coordination() coordination.Interface
 	Core() core.Interface
 	Extensions() extensions.Interface
 	Networking() networking.Interface
@@ -207,6 +211,10 @@ func (f *sharedInformerFactory) Apps() apps.Interface {
 	return apps.New(f, f.namespace, f.tweakListOptions)
 }
 
+func (f *sharedInformerFactory) Auditregistration() auditregistration.Interface {
+	return auditregistration.New(f, f.namespace, f.tweakListOptions)
+}
+
 func (f *sharedInformerFactory) Autoscaling() autoscaling.Interface {
 	return autoscaling.New(f, f.namespace, f.tweakListOptions)
 }
@@ -217,6 +225,10 @@ func (f *sharedInformerFactory) Batch() batch.Interface {
 
 func (f *sharedInformerFactory) Certificates() certificates.Interface {
 	return certificates.New(f, f.namespace, f.tweakListOptions)
+}
+
+func (f *sharedInformerFactory) Coordination() coordination.Interface {
+	return coordination.New(f, f.namespace, f.tweakListOptions)
 }
 
 func (f *sharedInformerFactory) Core() core.Interface {

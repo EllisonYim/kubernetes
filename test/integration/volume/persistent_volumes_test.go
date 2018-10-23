@@ -256,7 +256,6 @@ func TestPersistentVolumeBindRace(t *testing.T) {
 	glog.V(2).Infof("TestPersistentVolumeBindRace claims created")
 
 	// putting a bind manually on a pv should only match the claim it is bound to
-	rand.Seed(time.Now().Unix())
 	claim := claims[rand.Intn(maxClaims-1)]
 	claimRef, err := ref.GetReference(legacyscheme.Scheme, claim)
 	if err != nil {
@@ -1136,6 +1135,7 @@ func createClients(ns *v1.Namespace, t *testing.T, s *httptest.Server, syncPerio
 			ClaimInformer:             informers.Core().V1().PersistentVolumeClaims(),
 			ClassInformer:             informers.Storage().V1().StorageClasses(),
 			PodInformer:               informers.Core().V1().Pods(),
+			NodeInformer:              informers.Core().V1().Nodes(),
 			EnableDynamicProvisioning: true,
 		})
 	if err != nil {
